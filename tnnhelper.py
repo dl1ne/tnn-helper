@@ -305,7 +305,7 @@ class tnnhelper:
 		for link in self.links:
 			addConv = True
 			for line in r.splitlines():
-				if "Connected" in line:
+				if "Connected" in line or "Disconnected" in line:
 					f = line.split()
 					c = f[0]
 					if c == link:
