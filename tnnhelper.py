@@ -26,6 +26,16 @@ class tnnhelper:
 	nodes = {}
 	links = {}
 
+	http_response = ""
+
+	msg = {}
+	msg[0] = "Could not connect to API, please make sure\nthat you have active hamnet connection running."
+	msg[1] = "Could not read configuration file!\nMaybe there is an bad file permission setting?"
+	msg[2] = "Could not write configuration file!\nPlease check file system permissions!"
+	msg[3] = "API responds with an error,\nmore information:\n"
+	msg[4] = "Could not read TheNetNode configuration file!\nPlease check file permissions and path..."
+	msg[5] = "Could not connect to TheNetNode WebUI API!\nPlease check that tnn is running and WebUI is enabled.\nFurther, please check port settings..."
+
 	def __init__(self, api_url = ""):
 		if api_url != "":
 			self.api_url = api_url
@@ -38,9 +48,18 @@ class tnnhelper:
 		if self.tnn_ax25ip < 0:
 			self.tnn_ax25ip = int(self.tnn_hwport("AX25IP"))
 
+	def get_mycall(self):
+		return self.my_call
+
+	def get_response(self):
+		return self.http_response
+
 
 	def config_load(self):
-		self.config.read(self.config_file)
+		try:
+			self.config.read(self.config_file)
+		except:
+			self.returnmsg("def config_load():\n" + self.msg[1])
 		if 'general' in self.config:
 			self.api_url = self.config["general"]["api_url"]
 			self.my_call = self.config["general"]["my_call"]
@@ -59,7 +78,12 @@ class tnnhelper:
 				self.links[link] = self.config["links"][link]
 
 
-	def config_save(self):
+	def config_save(self, cleanup = False):
+		if cleanup:
+			if 'links' in self.config:
+				self.config.remove_section('links')
+			if 'nodes' in self.config:
+				self.config.remove_section('nodes')
 		if not 'general' in self.config:
 			self.config.add_section('general')
 		if not 'tnn' in self.config:
@@ -80,20 +104,33 @@ class tnnhelper:
 			self.config.set('nodes', node, self.nodes[node])
 		for link in self.links:
 			self.config.set('links', link, self.links[link])
-		with open(self.config_file, 'w') as configfile:
-			self.config.write(configfile)
+		try:
+			with open(self.config_file, 'w') as configfile:
+				self.config.write(configfile)
+		except:
+			self.returnmsg("def config_save():\n" + msg[2])
 
 
 	def checkerror(self, resp):
-		if ("message" in resp and resp["message"] != "success") or ("error" in resp):
-			print("API responds with error, exiting!")
-			print("More:")
-			print(resp)
+		self.http_response = resp
+		if ("message" in resp and (resp["message"] != "success" and resp["message"] != "deleted")) or ("error" in resp):
+			self.returnmsg("def checkerror():\n" + msg[3] + resp)
 			exit(1)
 
+
+	def returnmsg(self, msg):
+		print("\n\n")
+		print(msg)
+		print("\n\n")
+		exit(1)
+
+
 	def get_nodes(self, raw = False):
-		res = requests.get(self.api_url + "/api/node", timeout=self.api_timeout)
-		response = res.json()
+		try:
+			res = requests.get(self.api_url + "/api/node", timeout=self.api_timeout)
+			response = res.json()
+		except:
+			self.returnmsg("def get_nodes():\n" + msg[0])
 		self.checkerror(response)
 		for node in response["data"]:
 			self.nodes[node["callsign"]] = node["ipaddr"]
@@ -110,28 +147,46 @@ class tnnhelper:
 			mydata["callsign"] = self.my_call
 			mydata["callident"] = self.my_ident
 			payload = json.dumps(mydata)
-			res = requests.post(self.api_url + "/api/node/", data=payload, headers=headers, timeout=self.api_timeout)
-			self.checkerror(res.json())
-			self.get_nodes()
+			try:
+				res = requests.post(self.api_url + "/api/node/", data=payload, headers=headers, timeout=self.api_timeout)
+				self.checkerror(res.json())
+				self.get_nodes()
+			except:
+				self.returnmsg("def create_node()\n" + self.msg[0])
 
 
 	def get_links(self, raw = False):
 		updateTNN = False
-		res = requests.get(self.api_url + "/api/link/" + self.my_call, timeout=self.api_timeout)
-		response = res.json()
+		try:
+			res = requests.get(self.api_url + "/api/link/" + self.my_call, timeout=self.api_timeout)
+			response = res.json()
+		except:
+			self.returnmsg("def get_links()\n" + self.msg[0])
 		self.checkerror(response)
+		newlinks = {}
+		cleanup = False
 		if 'data' in response:
 			for link in response["data"]:
 				if self.my_call == link["callleft"] and link["callleft"] not in self.links:
-					self.links[link["callright"]] = 1
+					newlinks[link["callright"]] = 1
 					updateTNN = True
 				if self.my_call == link["callright"] and link["callright"] not in self.links:
-					self.links[link["callleft"]] = 1
+					newlinks[link["callleft"]] = 1
 					updateTNN = True
 
+
+			for linkold in self.links:
+				if linkold not in newlinks:
+					updateTNN = True
+					cleanup = True
+					break
+
 			if updateTNN:
+				self.links = newlinks
 				self.tnn_updateax25route()
 				self.tnn_updatelinks()
+				self.tnn_updateconv()
+				self.config_save(cleanup)
 
 			if raw:
 				return response["data"]
@@ -143,24 +198,44 @@ class tnnhelper:
 		mydata["callleft"] = self.my_call
 		mydata["callright"] = callsign
 		payload = json.dumps(mydata)
-		res = requests.post(self.api_url + "/api/link", data=payload, headers=headers, timeout=self.api_timeout)
-		response = res.json()
+		try:
+			res = requests.post(self.api_url + "/api/link", data=payload, headers=headers, timeout=self.api_timeout)
+			response = res.json()
+		except:
+			self.returnmsg("def create_link():\n" + self.msg[0])
 		self.checkerror(response)
 		self.get_links()
 
 
+	def delete_link(self, linkid):
+                headers = {'Content-type': 'application/json'}
+		try:
+	                res = requests.delete(self.api_url + "/api/link/" + str(linkid), headers=headers, timeout=self.api_timeout)
+	                response = res.json()
+		except:
+			self.returnmsg("def delete_link():\n" + self.msg[0])
+                self.checkerror(response)
+                self.get_links()
+
+
 	def get_tnnconfig(self, tnnconfig, linenum):
-		with open(tnnconfig) as fp:
-			for i, line in enumerate(fp):
-				if i == (linenum-1):
-					return line.replace('\n','').replace('\r','').replace(' ','').replace('\t','')
+		try:
+			with open(tnnconfig) as fp:
+				for i, line in enumerate(fp):
+					if i == (linenum-1):
+						return line.replace('\n','').replace('\r','').replace(' ','').replace('\t','')
+		except:
+			self.returnmsg("def get_tnnconfig():\n" + self.msg[4])
 		return False
 
 
 	def cmd_tnn(self, cfgstring):
 		cmdstring = urllib.pathname2url(cfgstring)
-		res = requests.post("http://" + self.tnn_host + ":" + self.tnn_port + "/cmd?cmd=" + cmdstring, timeout=self.api_timeout, auth=HTTPBasicAuth(self.my_call, ""))
-		response = res.text
+		try:
+			res = requests.post("http://" + self.tnn_host + ":" + self.tnn_port + "/cmd?cmd=" + cmdstring, timeout=self.api_timeout, auth=HTTPBasicAuth(self.my_call, ""))
+			response = res.text
+		except:
+			self.returnmsg("def cmd_tnn():\n" + self.msg[5])
 		return response
 
 
@@ -224,3 +299,24 @@ class tnnhelper:
 					rm = self.cmd_tnn("axip r - " + c)
 
 
+
+	def tnn_updateconv(self):
+		r = self.cmd_tnn("conv c")
+		for link in self.links:
+			addConv = True
+			for line in r.splitlines():
+				if "Connected" in line:
+					f = line.split()
+					c = f[0]
+					if c == link:
+						addConv = False
+			if addConv:
+				self.cmd_tnn("conv c " + link)
+
+
+		for line in r.splitlines():
+			if "Connected" in line or "Disconnected" in line:
+				f = line.split()
+				c = f[0]
+				if not c in self.links:
+					rm = self.cmd_tnn("conv c - " + c)
