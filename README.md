@@ -4,7 +4,7 @@ Der Helper dient dazu, dass mögliche Links zu anderen Digis automatisch auf den
 Hierzu ist die angepasste Version vom TNN notwendig, in welcher Web-Anfragen über Localhost/127.0.0.1 direkt als Sysop behandelt werden.
 
 
-`
+```
 #####################################################
 #               INSTALLATION GUIDE                  #
 #####################################################
@@ -31,5 +31,5 @@ echo "00 */12 * * *  root $P /usr/local/src/tnn-helper/helper.py" >> /etc/cron.d
 
 # restart crond
 systemctl restart cron
-`
+```
 
