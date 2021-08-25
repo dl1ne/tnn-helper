@@ -8,7 +8,7 @@ from datetime import datetime
 import configparser
 
 class tnnhelper:
-	api_url     = "http://192.168.101.135:8000"
+	api_url     = "http://rconfig.di0han.as64636.de.ampr.org:8000"
 	api_timeout = 4
 
 	config = configparser.RawConfigParser()
@@ -45,7 +45,7 @@ class tnnhelper:
 		if self.my_ident == "":
 			self.my_ident = self.get_tnnconfig(self.tnn_pas, 13)
 		self.create_node()
-		if self.tnn_ax25ip < 0:
+		if int(self.tnn_ax25ip) < 0:
 			self.tnn_ax25ip = int(self.tnn_hwport("AX25IP"))
 
 	def get_mycall(self):
@@ -72,10 +72,10 @@ class tnnhelper:
 			self.tnn_ax25ip = self.config["tnn"]["ax25ip_port"]
 		if 'nodes' in self.config:
 			for node in self.config["nodes"]:
-				self.nodes[node] = self.config["nodes"][node]
+				self.nodes[node.upper()] = self.config["nodes"][node]
 		if 'links' in self.config:
 			for link in self.config["links"]:
-				self.links[link] = self.config["links"][link]
+				self.links[link.upper()] = self.config["links"][link]
 
 
 	def config_save(self, cleanup = False):
@@ -101,20 +101,20 @@ class tnnhelper:
 		self.config.set('tnn', 'pas', self.tnn_pas)
 		self.config.set('tnn', 'ax25ip_port', self.tnn_ax25ip)
 		for node in self.nodes:
-			self.config.set('nodes', node, self.nodes[node])
+			self.config.set('nodes', node.upper(), self.nodes[node])
 		for link in self.links:
-			self.config.set('links', link, self.links[link])
+			self.config.set('links', link.upper(), self.links[link])
 		try:
 			with open(self.config_file, 'w') as configfile:
 				self.config.write(configfile)
 		except:
-			self.returnmsg("def config_save():\n" + msg[2])
+			self.returnmsg("def config_save():\n" + self.msg[2])
 
 
 	def checkerror(self, resp):
 		self.http_response = resp
 		if ("message" in resp and (resp["message"] != "success" and resp["message"] != "deleted")) or ("error" in resp):
-			self.returnmsg("def checkerror():\n" + msg[3] + resp)
+			self.returnmsg("def checkerror():\n" + self.msg[3] + str(resp))
 			exit(1)
 
 
@@ -130,18 +130,23 @@ class tnnhelper:
 			res = requests.get(self.api_url + "/api/node", timeout=self.api_timeout)
 			response = res.json()
 		except:
-			self.returnmsg("def get_nodes():\n" + msg[0])
+			self.returnmsg("def get_nodes():\n" + self.msg[0])
 		self.checkerror(response)
+		self.nodes_old = self.nodes
+		self.nodes = {}
 		for node in response["data"]:
-			self.nodes[node["callsign"]] = node["ipaddr"]
+			self.nodes[node["callsign"].upper()] = node["ipaddr"]
 			if self.my_call.upper() == node["callsign"].upper():
 				self.my_callid = node["id"]
+		for node in self.nodes_old:
+			if node not in self.nodes and node != self.my_call:
+				self.delete_link(self.links[node])
 		if raw:
 			return response["data"]
 
 	def create_node(self):
 		self.get_nodes()
-		if self.my_callid < 0:
+		if int(self.my_callid) < 0 or self.my_call not in self.nodes:
 			headers = {'Content-type': 'application/json'}
 			mydata = {}
 			mydata["callsign"] = self.my_call
@@ -168,15 +173,17 @@ class tnnhelper:
 		if 'data' in response:
 			for link in response["data"]:
 				if self.my_call == link["callleft"] and link["callleft"] not in self.links:
-					newlinks[link["callright"]] = 1
+					newlinks[link["callright"]] = link["id"]
 					updateTNN = True
 				if self.my_call == link["callright"] and link["callright"] not in self.links:
-					newlinks[link["callleft"]] = 1
+					newlinks[link["callleft"]] = link["id"]
 					updateTNN = True
 
 
 			for linkold in self.links:
 				if linkold not in newlinks:
+					self.delete_link(self.links[linkold], False)
+					del self.links[linkold]
 					updateTNN = True
 					cleanup = True
 					break
@@ -207,15 +214,16 @@ class tnnhelper:
 		self.get_links()
 
 
-	def delete_link(self, linkid):
-                headers = {'Content-type': 'application/json'}
+	def delete_link(self, linkid, update = True):
+		headers = {'Content-type': 'application/json'}
 		try:
 	                res = requests.delete(self.api_url + "/api/link/" + str(linkid), headers=headers, timeout=self.api_timeout)
 	                response = res.json()
 		except:
 			self.returnmsg("def delete_link():\n" + self.msg[0])
-                self.checkerror(response)
-                self.get_links()
+		self.checkerror(response)
+		if update:
+			self.get_links()
 
 
 	def get_tnnconfig(self, tnnconfig, linenum):
@@ -230,7 +238,7 @@ class tnnhelper:
 
 
 	def cmd_tnn(self, cfgstring):
-		cmdstring = urllib.pathname2url(cfgstring)
+		cmdstring = urllib.request.pathname2url(cfgstring)
 		try:
 			res = requests.post("http://" + self.tnn_host + ":" + self.tnn_port + "/cmd?cmd=" + cmdstring, timeout=self.api_timeout, auth=HTTPBasicAuth(self.my_call, ""))
 			response = res.text
@@ -288,7 +296,7 @@ class tnnhelper:
 					if c == link:
 						addRoute = False
 			if addRoute:
-				self.cmd_tnn("axip r + " + link + " " + self.nodes[link.lower()] + " udp 10093")
+				self.cmd_tnn("axip r + " + link + " " + self.nodes[link] + " udp 10093")
 				"""self.links[link] = self.links[link] + 1"""
 
 		for line in r.splitlines():
